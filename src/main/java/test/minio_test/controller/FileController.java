@@ -2,6 +2,8 @@ package test.minio_test.controller;
 
 import io.minio.errors.MinioException;
 import java.io.InputStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
@@ -41,13 +43,35 @@ public class FileController {
   @PostMapping("/upload")
   public ResponseEntity<String> uploadFile(@RequestParam("file") MultipartFile file,
       @RequestParam(value = "newFileName", required = false) String newFileName) {
+
+    double maxFileSize = 1.3333 * 1024 * 1024; // 1,3333 Mo => j'ai mis ça pour tester la troncature à 1.33 dans le message d'erreur
+    double maxFileSizeInMo = BigDecimal.valueOf(maxFileSize / (1024 * 1024))
+        .setScale(2, RoundingMode.HALF_UP)
+        .doubleValue();
+
     UploadedFilesEntity uploadedFile = new UploadedFilesEntity();
     uploadedFile.setAction("upload");
 
+    // modifier le nom du fichier si un nouveau nom était dans la requête
+    String fileName = newFileName != null ? newFileName : file.getOriginalFilename();
+    uploadedFile.setFilename(fileName);
+
+    String contentType = file.getContentType();
+    if (contentType == null || (!contentType.equals("application/pdf") && !contentType.equals("image/png"))) {
+      uploadedFile.setSuccess(false);
+      uploadedFile.setMessage("Erreur d'upload, le type d'objet est : " + contentType);
+      uploadedFilesRepository.save(uploadedFile);
+      return ResponseEntity.badRequest().body("Seuls les fichiers PDF et PNG sont autorisés.");
+    }
+
     try {
-      // modifier le nom du fichier si un nouveau nom était dans la requête
-      String fileName = newFileName != null ? newFileName : file.getOriginalFilename();
-      uploadedFile.setFilename(fileName);
+      long fileSize = file.getSize();
+      if (fileSize > maxFileSize) {
+        // Gérer le dépassement de la taille maximale autorisée
+        String msg = "La taille du fichier dépasse la limite maximale autorisée : " + maxFileSizeInMo + " MO";
+        LOG.warn(msg);
+        throw new IllegalArgumentException(msg);
+      }
 
       // vérifier si le fichier existe déjà dans le bucket
       if (fileService.fileExists("minio-test", fileName)) {

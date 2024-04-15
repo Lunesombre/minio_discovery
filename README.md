@@ -34,10 +34,33 @@ l'absolu mais dans notre useCase ça me parait bien (je veux mettre à jour le p
 J'ai rajouté des "logs" sous forme d'une table postgresql qui enregistre l'action tentée, l'action son succès ou non, un message, et le timestamp de
 la réalisation de l'action.
 
+### UPDATE 15/04/2024 :
+
+- ***rajout <ins>contrôle du format</ins>*** des fichiers uploadés : accepte que du PDF et du PNG (c'est un exemple, essayer d'upload du jpeg par ex,
+  ça
+  passe en
+  erreur);
+- ***rajout <ins>contrôle taille des fichiers uploadés</ins>*** :
+    - dans application.properties: réduction taille max des requêtes et des fichiers à 2 MB (de base c'est 10) => **envoyer un fichier plus gros de
+      ça renvoie une erreur 413 : Request Entity Too Large !**
+    - dans le controller, ajout limite à 1.3333 MO
+      => **en envoyant un fichier >1.3333 mais < à 2 MO, on passe sur une 500 avec mon message d'erreur et enregistrement d'une ligne en DB.** *C'est
+      surtout pour l'exemple que j'ai mis les 2 fonctionnements.*
+    - NB : postman possède sa propre limite de taille de fichier autorisé en upload, vous pouvez la changer si besoin, ou bien faire la requête en
+      curl dans votre CLI préférée :
+      ```curl
+      curl -X POST -F "file=@chemin/du/fichier/nomDuFichier.pdf" http://localhost:8080/api/file/upload
+
+      ```
+- MàJ de la collection postman
+
 ### Collection Postman pour tester :
 
 Je ne suis pas sûr que le fichier que j'ai uploadé fonctionne directement, au pire, importez une petite image.png à la place de
-mon `ERD-Notation.PNG`.
+mon `ERD-Notation.PNG`. (idem pour les autres fichiers).
+
+Attention l'application <ins>n'accepte plus que du PDF et du PNG</ins> en upload. Si vous utilisez un autre format, c'est pour tester les cas d'
+échec :)
 
 ```json
 {
@@ -244,6 +267,62 @@ mon `ERD-Notation.PNG`.
         }
       },
       "response": []
+    },
+    {
+      "name": "Essai upload truc mauvais format",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "postman-cloud:///1eefb016-a044-4d70-b72a-b27c3f3c50a6"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}api/file/upload",
+          "host": [
+            "{{base_url}}api"
+          ],
+          "path": [
+            "file",
+            "upload"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Essai upload truc trop gros (limite taille descendue à 1MB)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "postman-cloud:///1eefb104-7a79-4e80-99a6-d94f1dd29783"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}api/file/upload",
+          "host": [
+            "{{base_url}}api"
+          ],
+          "path": [
+            "file",
+            "upload"
+          ]
+        }
+      },
+      "response": []
     }
   ],
   "variable": [
@@ -253,7 +332,7 @@ mon `ERD-Notation.PNG`.
     },
     {
       "key": "api_file",
-      "value": "/api/file"
+      "value": "api/file"
     }
   ]
 }
