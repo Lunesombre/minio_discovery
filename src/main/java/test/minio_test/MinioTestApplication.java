@@ -9,5 +9,4 @@ public class MinioTestApplication {
   public static void main(String[] args) {
     SpringApplication.run(MinioTestApplication.class, args);
   }
-
 }

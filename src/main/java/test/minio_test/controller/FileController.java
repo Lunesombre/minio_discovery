@@ -18,36 +18,58 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import test.minio_test.persistence.UploadedFilesEntity;
+import test.minio_test.persistence.UploadedFilesRepository;
 import test.minio_test.service.FileService;
 
 
+// En vrai, il faudrait utiliser une lib comme MinIO Event Notification pour récupérer les events de ce qu'il se passe vraiment chez MinIo,
+// mais dans mon usage, ce sera suffisant d'ajouter une ligne en db pour valider les actions.
 @RestController
 @RequestMapping("/api/file")
 public class FileController {
 
   private final FileService fileService;
+  private final UploadedFilesRepository uploadedFilesRepository;
   private final Logger LOG = LoggerFactory.getLogger(FileController.class);
 
-  public FileController(FileService fileService) {
+  public FileController(FileService fileService, UploadedFilesRepository uploadedFilesRepository) {
     this.fileService = fileService;
+    this.uploadedFilesRepository = uploadedFilesRepository;
   }
 
   @PostMapping("/upload")
   public ResponseEntity<String> uploadFile(@RequestParam("file") MultipartFile file,
       @RequestParam(value = "newFileName", required = false) String newFileName) {
+    UploadedFilesEntity uploadedFile = new UploadedFilesEntity();
+    uploadedFile.setAction("upload");
+
     try {
       // modifier le nom du fichier si un nouveau nom était dans la requête
       String fileName = newFileName != null ? newFileName : file.getOriginalFilename();
+      uploadedFile.setFilename(fileName);
 
       // vérifier si le fichier existe déjà dans le bucket
       if (fileService.fileExists("minio-test", fileName)) {
         //s'il existe, le supprimer (permet d'écraser en ré-uploadant un fichier, à voir si on veut ce fonctionnement)
         fileService.removeFile("minio-test", fileName);
+        UploadedFilesEntity file2 = new UploadedFilesEntity();
+        file2.setFilename(fileName);
+        file2.setAction("delete");
+        file2.setMessage(fileName + " supprimé, avant réinsertion");
+        file2.setSuccess(true);
+        uploadedFilesRepository.save(file2);
       }
       fileService.uploadFile("minio-test", fileName, file.getInputStream());
+      uploadedFile.setSuccess(true);
+      uploadedFile.setMessage(fileName + " uploadé avec succès");
+      uploadedFilesRepository.save(uploadedFile);
       return ResponseEntity.ok("File uploaded successfully!");
     } catch (Exception e) {
       LOG.error("Failed upload due to: {}", e.getMessage());
+      uploadedFile.setMessage("Echec d'upload de " + file.getOriginalFilename() + " à cause de : " + e.getMessage());
+      uploadedFile.setSuccess(false);
+      uploadedFilesRepository.save(uploadedFile);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to upload file!");
     }
   }
@@ -65,38 +87,65 @@ public class FileController {
    */
   @GetMapping("/download")
   public ResponseEntity<?> downloadFile(@RequestParam("fileName") String fileName) {
+
+    UploadedFilesEntity file = new UploadedFilesEntity();
+    file.setFilename(fileName);
+    file.setAction("download");
+
     try {
       // vérifier si le fichier existe déjà dans le bucket
       if (fileService.fileExists("minio-test", fileName)) {
         InputStream inputStream = fileService.downloadFile("minio-test", fileName);
         ByteArrayResource resource = new ByteArrayResource(IOUtils.toByteArray(inputStream));
+        file.setSuccess(true);
+        file.setMessage(fileName + " téléchargé");
+        uploadedFilesRepository.save(file);
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
             .body(resource);
       } else {
         String errorMessage = "Le fichier '" + fileName + "' n'existe pas.";
+        file.setMessage(errorMessage);
+        file.setSuccess(false);
+        uploadedFilesRepository.save(file);
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorMessage);
       }
     } catch (Exception e) {
       LOG.error("Failed upload due to: {}", e.getMessage());
+      file.setSuccess(false);
+      file.setMessage(e.getMessage());
+      uploadedFilesRepository.save(file);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
     }
   }
 
   @DeleteMapping("/delete/{fileName}")
   public ResponseEntity<String> deleteFile(@PathVariable("fileName") String fileName) {
+
+    UploadedFilesEntity file = new UploadedFilesEntity();
+    file.setFilename(fileName);
+    file.setAction("delete");
     try {
       // vérifier si le fichier existe déjà dans le bucket
       if (!fileService.fileExists("minio-test", fileName)) {
+        file.setSuccess(false);
+        file.setMessage("Le fichier" + fileName + " n'existe pas.");
+        uploadedFilesRepository.save(file);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body("Le fichier '" + fileName + "' n'existe pas.");
       }
 
       // Appel à la méthode de suppression du service
       fileService.removeFile("minio-test", fileName);
+      file.setSuccess(true);
+      file.setMessage("Fichier " + fileName + " supprimé avec succès");
+      uploadedFilesRepository.save(file);
       return ResponseEntity.ok("Fichier supprimé avec succès.");
 
     } catch (Exception e) {
+      file.setSuccess(false);
+      file.setMessage("Erreur lors de la suppression du fichier: " + fileName + " : " + e.getMessage());
+      uploadedFilesRepository.save(file);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
           .body("Erreur lors de la suppression du fichier: " + e.getMessage());
     }
@@ -104,23 +153,41 @@ public class FileController {
 
   @GetMapping("/verify/{filename}")
   public ResponseEntity<String> findFile(@PathVariable("filename") String fileName) {
+    UploadedFilesEntity file = new UploadedFilesEntity();
+    file.setFilename(fileName);
+    file.setAction("checkPresence");
     try {
       // vérifier si le fichier existe déjà dans le bucket
       if (!fileService.fileExists("minio-test", fileName)) {
+        file.setSuccess(false);
+        file.setMessage("Le fichier" + fileName + " n'existe pas.");
+        uploadedFilesRepository.save(file);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body("Le fichier '" + fileName + "' n'existe pas.");
       }
+      file.setSuccess(true);
+      file.setMessage("Accès au nom du fichier : " + fileName);
+      uploadedFilesRepository.save(file);
       return ResponseEntity.ok("Le fichier '" + fileName + "' est bien stocké ici.");
 
     } catch (Exception e) {
+      file.setSuccess(false);
+      file.setMessage("Erreur lors de l'accès au fichier: " + fileName + " : " + e.getMessage());
+      uploadedFilesRepository.save(file);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-          .body("Erreur lors de la suppression du fichier: " + e.getMessage());
+          .body("Erreur lors de de l'accès au fichier: " + e.getMessage());
     }
   }
 
   @GetMapping("listAllFiles/{bucketName}")
   public ResponseEntity<String> findAllFiles(@PathVariable("bucketName") String bucketName) throws MinioException {
     List<String> filesList = fileService.getAllFiles(bucketName);
+    UploadedFilesEntity file = new UploadedFilesEntity();
+    file.setFilename(bucketName);
+    file.setAction("bucketFilesList");
+    file.setSuccess(true);
+    file.setMessage("Accès à la liste des fichiers du bucket : " + bucketName);
+    uploadedFilesRepository.save(file);
     return ResponseEntity.ok("Fichiers présents dans le bucket : " + filesList.toString());
   }
 }
